@@ -1,0 +1,322 @@
+#!/usr/bin/env python3
+# -*- mode: Python;-*-
+
+import classad
+import htcondor
+
+import argparse
+import inspect
+import numbers
+import sys
+
+
+def configure_htcondor():
+    # See https://opensciencegrid.atlassian.net/browse/INF-760
+    htcondor.param['SEC_CLIENT_AUTHENTICATION_METHODS'] = 'SSL FS'
+
+    # Suggested by Brian L., I think, at some point
+    htcondor.param['SEC_CLIENT_AUTHENTICATION'] = 'OPTIONAL'
+    htcondor.param['SEC_CLIENT_INTEGRITY'] = 'OPTIONAL'
+    htcondor.param['SEC_CLIENT_ENCRYPTION'] = 'OPTIONAL'
+
+    # Debugging
+    # htcondor.param['TOOL_DEBUG'] = 'D_SECURITY:2 D_CAT D_ALWAYS:2'
+    # htcondor.enable_debug()
+
+# --------------------------------------------------------------
+# Table renderer - could be extracted into a module?
+# --------------------------------------------------------------
+
+def render_table(data, format=None):
+    column_count = None
+    table = ''
+
+    # Pass 1: Calculate column widths
+    widths = [len(x) for x in data[0]]
+    for row in data:
+        if column_count is None:
+            column_count = len(row)
+        elif column_count != len(row):
+            print('ERROR: mismatched row lengths', file=sys.stderr)
+        for column_index in range(0, column_count):
+            output = str(row[column_index])
+            widths[column_index] = max(len(output), widths[column_index])
+
+    # Pass 2: Render table
+    divider = '+'
+    for column_index in range(0, column_count):
+        divider += ('-' * (widths[column_index] + 2)) + '+'
+
+    table += divider + '\n'
+
+    table += '|'
+    for column_index in range(0, column_count):
+        table += ' ' + (data[0][column_index].center(widths[column_index])) + ' |'
+    table += '\n'
+
+    table += divider + '\n'
+
+    for row in data[1:]:
+        table += '|'
+        for column_index in range(0, column_count):
+            table += ' '
+            if isinstance(row[column_index], numbers.Real):
+                table += str(row[column_index]).rjust(widths[column_index])
+            else:
+                table += str(row[column_index]).ljust(widths[column_index])
+            table += ' |'
+        table += '\n'
+
+    table += divider
+
+    return table
+
+# --------------------------------------------------------------
+
+class AllAction(argparse.Action):
+    def __init__(self, option_strings, dest, nargs=None, **kwargs):
+        if nargs is not None:
+            raise ValueError("nargs not allowed")
+        super(AllAction, self).__init__(option_strings, dest, nargs=0, **kwargs)
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        setattr(namespace, 'factory', True)
+        setattr(namespace, 'ospool', True)
+        setattr(namespace, 'jobs', True)
+
+def parse_arguments():
+    # Get the arguments
+    parser = argparse.ArgumentParser(description='Summarize pilot job data across multiple sources.')
+    parser.add_argument('-f', '--factory', action='store_true', help='Report on Factory AP pilots for a Factory entry')
+    parser.add_argument('-o', '--ospool', action='store_true', help='Report on OSPool resources for a Factory entry')
+    parser.add_argument('-e', '--entry', help='The Factory entry name to look for')
+    parser.add_argument('-j', '--jobs', action='store_true', help='Report on OSPool user jobs for certain resources')
+    parser.add_argument('-r', '--resource', action='append', help='The resource name to look for')
+    parser.add_argument('-a', '--all', action=AllAction, help='Produce all reports')
+    args = parser.parse_args()
+
+    # Do sanity checking here
+    if (args.factory or args.ospool) and (args.entry is None):
+        print(f'{parser.prog}: error: the Factory AP and OSPool Resources reports require a Factory entry (-e)')
+        sys.exit(1)
+    if args.jobs and (not args.ospool) and (args.resource is None):
+        print(f'{parser.prog}: error: the OSPool jobs report requires either the OSPool resources report or resources (-r)')
+        sys.exit(1)
+
+    # Ok, all done
+    return args
+
+def report_on_factory_access_point_pilots(factory_host, entry_name):
+    """Prints a report on pilot jobs in the factory Access Points
+
+    The GlideinWMS Factory submits jobs into its own Access Points.  The
+    UCSD Factory runs multiple Access Points (schedds) on the same host,
+    so they have complex names.  Typically, all of the pilots for a
+    given entry are in the same Access Point, but I do not know if that
+    is by design or accident.
+
+    The corresponding command is:
+    condor_q -global -all -pool gfactory-2.opensciencegrid.org -const 'glideinentryname=="XXX"'
+
+    Args:
+      factory_host (str): The Factory hostname with the Access Points.
+      entry_name (str): The GlideinWMS entry name to filter by.
+    """
+
+    schedd_constraint = f'GlideinEntryName == "{entry_name}"'
+    schedd_projection = ['GlideinFrontendName', 'JobStatus']
+    factory_collector = htcondor.Collector(factory_host)
+    factory_schedd_list = factory_collector.locateAll(htcondor.DaemonTypes.Schedd)
+
+    factory_queues = {}
+    schedds_contacted = []
+    schedds_failed = []
+    for factory_schedd_ad in factory_schedd_list:
+        factory_schedd = htcondor.Schedd(factory_schedd_ad)
+        try:
+            for factory_job_ad in factory_schedd.query(constraint=schedd_constraint, projection=schedd_projection):
+                schedd_name = factory_schedd_ad['Name']
+                frontend_name = factory_job_ad['GlideinFrontendName']
+                if schedd_name not in factory_queues:
+                    factory_queues[schedd_name] = {}
+                if frontend_name not in factory_queues[schedd_name]:
+                    factory_queues[schedd_name][frontend_name] = [schedd_name, frontend_name, 0, 0, 0, 0, 0, 0, 0]
+                job_status = factory_job_ad['JobStatus']
+                factory_queues[schedd_name][frontend_name][job_status + 1] += 1
+        except htcondor.HTCondorIOError as e:
+            schedds_failed.append(factory_schedd_ad['Name'])
+            print(f'Could not access schedd "{factory_schedd_ad["Name"]}": {e}', file=sys.stderr)
+            continue 
+        schedds_contacted.append(factory_schedd_ad['Name'])
+
+    data = [('Schedd Name', 'Frontend Name', 'Idle', 'Run', 'Remov', 'Compl', 'Held', 'TxOut', 'Suspd'),]
+    for schedd_name in sorted(factory_queues.keys()):
+        data += [factory_queues[schedd_name][frontend_name] for frontend_name in sorted(factory_queues[schedd_name].keys())]
+    print('PILOTS IN FACTORY ACCESS POINTS')
+    print(render_table(data))
+    print(f'* Contacted {len(schedds_contacted)} Factory Access Points')
+    if len(schedds_failed) > 0:
+        print('* Failed to contact: ' + ', '.join(schedds_failed))
+    print()
+
+# VIEWING A PILOT
+# login04$ condor_q -all -pool gfactory-2.opensciencegrid.org -name 'schedd_glideins9@gfactory-2.opensciencegrid.org' 8558215.2 -l
+
+def report_on_ospool_resources(ospool_hosts, entry_name):
+    """Prints a report on OSPool slots for an entry
+
+    When a GlideinWMS pilot registers with the OSPool collector, its
+    resources appear in the pool as slots.  In many cases, the original
+    resources are partitionable slots and then actual dynamic slots are
+    created out of them; in other cases, the resources are simply static
+    slots.
+
+    Corresponding command:
+    condor_status -constraint 'GLIDEIN_Entry_Name == "XXX"'
+
+    Args:
+      ospool_hosts (list): The list of OSPool collectors to check.
+      entry_name (str): The GlideinWMS entry name to filter by.
+    """
+
+    ospool_projection = ['SlotType', 'State', 'GLIDEIN_ResourceName']
+    ospool_collector = htcondor.Collector(ospool_hosts)
+    startd_list = ospool_collector.query(htcondor.AdTypes.Startd,
+                                         constraint=f'GLIDEIN_Entry_Name == "{entry_name}"',
+                                         projection=ospool_projection)
+    data = [
+        ['Metric', 'Total', 'Unclaimed', 'Claimed', 'Preempting', 'Other'],
+        ['Partitionable slots', 0, 0, 0, 0, 0],
+        ['Dynamic slots', 0, 0, 0, 0, 0],
+        ['Static slots', 0, 0, 0, 0, 0],
+        ['Unknown slots', 0, 0, 0, 0, 0]
+    ]
+    resource_names = set()
+    for startd_ad in startd_list:
+        row = -1
+        if startd_ad['SlotType'] == 'Partitionable': row = 1
+        elif startd_ad['SlotType'] == 'Dynamic': row = 2
+        elif startd_ad['SlotType'] == 'Static': row = 3
+        data[row][1] += 1
+        if startd_ad['State'] == 'Unclaimed': data[row][2] += 1
+        elif startd_ad['State'] == 'Claimed': data[row][3] += 1
+        elif startd_ad['State'] == 'Preempting': data[row][4] += 1
+        else: data[row][5] += 1
+        resource_names.add(startd_ad['GLIDEIN_ResourceName'])
+
+    print('SLOTS IN OSPOOL COLLECTOR')
+    print(render_table(data, ('s', 'n', 'n', 'n', 'n', 'n')))
+    print(f'* Resources: {", ".join(resource_names)}\n')
+
+    return resource_names
+
+def report_on_jobs_at_site(ospool_hosts, resource_names):
+    """Prints report on the queued jobs running or ran at the site.
+
+    Corresponding command (on an OSPool Access Point):
+    condor_q -all -constraint 'MachineAttrGLIDEIN_ResourceName0 == "AMNH-HEL-CE1"'
+
+    Args:
+      resource_names (list): The list of resource names to filter by.
+    """
+
+    # 20 Sep 2022: This report finds jobs for all entries that advertise as
+    # belonging to the given resource name, not just the entry that the previous
+    # report used.  In theory, the previous report could build a set of slot
+    # names, pass that here, and then use that set to filter jobs to just those
+    # that match known slots.
+    #
+    # Ah, but instead, I talked to Mat and did this:
+    #
+    # - https://github.com/opensciencegrid/ospool-access-point/pull/25
+    #
+    # Once merged, this should copy the entry name from machine ads to job ads
+    # for Access Points with this config.
+
+    if len(resource_names) == 0:
+        print('\nNo resource names to search for.')
+        return
+
+    # Per Brian B.: Best to go through both and take the union
+    ospool_schedd_names = {}   # schedd name => [count, schedd classad]
+    for ospool_collector_hostname in ospool_hosts:
+        ospool_collector = htcondor.Collector(ospool_collector_hostname)
+        ospool_schedd_classad_list = ospool_collector.locateAll(htcondor.DaemonTypes.Schedd)
+        for ospool_schedd_classad in ospool_schedd_classad_list:
+            ospool_schedd_name = ospool_schedd_classad['Name']
+            if ospool_schedd_name in ospool_schedd_names:
+                ospool_schedd_names[ospool_schedd_name][0] += 1
+            else:
+                ospool_schedd_names[ospool_schedd_name] = [1, ospool_schedd_classad]
+    printed_one = False
+    for ospool_schedd_name in ospool_schedd_names:
+        found_count = ospool_schedd_names[ospool_schedd_name][0]
+        if found_count != len(ospool_hosts):
+            print(f'Found schedd "{ospool_schedd_name}" in only {found_count} collector(s)', file=sys.stderr)
+            printed_one = True
+    if printed_one:
+        print()
+
+    ospool_data = {}
+    for resource_name in resource_names:
+        ospool_data[resource_name] = {}
+
+    # Prepare to go through schedds
+    SCHEDD_BLACKLIST = ('os-ce1.osgdev.chtc.io', 'login.ci-connect.uchicago.edu')
+    projection = ['MachineAttrGLIDEIN_ResourceName0', 'MachineAttrGLIDEIN_Entry_Name0', 'JobStatus']
+    constraint = ' && '.join([f'MachineAttrGLIDEIN_ResourceName0 == "{resource_name}"' for resource_name in resource_names])
+    # print(f'\nSchedd constraint: |{constraint}|', file=sys.stderr)
+    schedds_contacted = []
+    schedds_failed = []
+
+    for ospool_schedd_name in ospool_schedd_names:
+        if ospool_schedd_name in SCHEDD_BLACKLIST:
+            continue
+        ospool_schedd_classad = ospool_schedd_names[ospool_schedd_name][1]
+        ospool_schedd = htcondor.Schedd(ospool_schedd_classad)
+        # print(f'Trying schedd "{ospool_schedd_name}"', file=sys.stderr)
+        try:
+            for ospool_job_ad in ospool_schedd.query(constraint=constraint, projection=projection):
+                resource_name = ospool_job_ad['MachineAttrGLIDEIN_ResourceName0']
+                entry_name = ospool_job_ad.get('MachineAttrGLIDEIN_Entry_Name0', '<none>')
+                job_status = ospool_job_ad['JobStatus']
+                if entry_name not in ospool_data[resource_name]:
+                    ospool_data[resource_name][entry_name] = [resource_name, entry_name, 0, 0, 0, 0, 0, 0, 0]
+                ospool_data[resource_name][entry_name][int(job_status) + 1] += 1
+        except htcondor.HTCondorIOError as e:
+            schedds_failed.append(ospool_schedd_name)
+            print(f'Could not access schedd "{ospool_schedd_name}": {e}', file=sys.stderr)
+            continue 
+        schedds_contacted.append(ospool_schedd_name)
+
+    data = [('Resource Name', 'Entry Name', 'Idle', 'Run', 'Remov', 'Compl', 'Held', 'TxOut', 'Suspd'),]
+    for resource_name in sorted(ospool_data.keys()):
+        data += [ospool_data[resource_name][entry_name] for entry_name in sorted(ospool_data[resource_name].keys())]
+    print('JOBS IN OSPOOL')
+    print(render_table(data))
+    print(f'* Contacted {len(schedds_contacted)} Access Points')
+    if len(schedds_failed) > 0:
+        print('* Failed to contact: ' + ', '.join(schedds_failed))
+    print()
+
+def cli():
+    FACTORY_HOST = 'gfactory-2.opensciencegrid.org'
+    OSPOOL_HOSTS = ['cm-1.ospool.osg-htc.org', 'cm-2.ospool.osg-htc.org']
+    args = parse_arguments()
+    print()
+
+    configure_htcondor()
+
+    if args.factory:
+        report_on_factory_access_point_pilots(FACTORY_HOST, args.entry)
+
+    if args.ospool:
+        resource_names = report_on_ospool_resources(OSPOOL_HOSTS, args.entry)
+
+    if args.jobs:
+        if args.resource is not None:
+            resource_names = args.resource
+        report_on_jobs_at_site(OSPOOL_HOSTS, resource_names)
+
+if __name__ == '__main__':
+    cli()

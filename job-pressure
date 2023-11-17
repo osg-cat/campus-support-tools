@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+# -*- mode: Python;-*-
+
+import classad
+import htcondor
+
+import csv
+import sys
+
+# Constants
+OSPOOL_HOSTS = ['cm-1.ospool.osg-htc.org', 'cm-2.ospool.osg-htc.org']
+SCHEDD_BLACKLIST = { 'login.ci-connect.uchicago.edu', 'os-ce1.osgdev.chtc.io', 'osg-vo.isi.edu',
+                     'osg1.research.cs.kent.edu', 'sub-2.icecube.wisc.edu', 'testbed' }
+
+def configure_htcondor():
+    # See https://opensciencegrid.atlassian.net/browse/INF-760
+    htcondor.param['SEC_CLIENT_AUTHENTICATION_METHODS'] = 'SSL FS'
+
+    # Suggested by Brian L., I think, at some point
+    htcondor.param['SEC_CLIENT_AUTHENTICATION'] = 'OPTIONAL'
+    htcondor.param['SEC_CLIENT_INTEGRITY'] = 'OPTIONAL'
+    htcondor.param['SEC_CLIENT_ENCRYPTION'] = 'OPTIONAL'
+
+    # Debugging
+    # htcondor.param['TOOL_DEBUG'] = 'D_SECURITY:2 D_CAT D_ALWAYS:2'
+    # htcondor.enable_debug()
+
+def get_schedds(ospool_hosts):
+    # Per Brian B.: Best to go through both and take the union
+    ospool_schedd_names = {}   # schedd name => [count, schedd classad]
+    for ospool_collector_hostname in ospool_hosts:
+        ospool_collector = htcondor.Collector(ospool_collector_hostname)
+        ospool_schedd_classad_list = ospool_collector.locateAll(htcondor.DaemonTypes.Schedd)
+        for ospool_schedd_classad in ospool_schedd_classad_list:
+            ospool_schedd_name = ospool_schedd_classad['Name']
+            if ospool_schedd_name in ospool_schedd_names:
+                ospool_schedd_names[ospool_schedd_name][0] += 1
+            else:
+                ospool_schedd_names[ospool_schedd_name] = [1, ospool_schedd_classad]
+    return ospool_schedd_names
+
+def get_job_ads(ospool_schedds):
+    # Prepare to go through schedds
+    projection = ['ProjectName', 'Owner', 'JobUniverse', 'RequestCpus', 'RequestDisk', 'RequestMemory', 'RequestGpus', 'RequireGpus', 'JobStatus']
+    job_data = {}
+    schedds_contacted = []
+    schedds_failed = []
+
+    for ospool_schedd_name in ospool_schedds:
+        if (ospool_schedd_name in SCHEDD_BLACKLIST) or ('jupyter' in ospool_schedd_name) or ('chtc.wisc.edu' in ospool_schedd_name):
+            continue
+        ospool_schedd_classad = ospool_schedds[ospool_schedd_name][1]
+        ospool_schedd = htcondor.Schedd(ospool_schedd_classad)
+        print(f'Trying schedd "{ospool_schedd_name}"', file=sys.stderr)
+        try:
+            for ospool_job_ad in ospool_schedd.query(projection=projection):
+                job_status = ospool_job_ad['JobStatus']
+                require_gpus_expr_tree = ospool_job_ad.get('RequireGpus')
+                if require_gpus_expr_tree is None:
+                    require_gpus = '-'
+                else:
+                    require_gpus = str(require_gpus_expr_tree)
+                group = (ospool_job_ad['JobUniverse'], ospool_job_ad['RequestCpus'],
+                         ospool_job_ad.eval('RequestMemory'), ospool_job_ad.eval('RequestDisk'),
+                         ospool_job_ad.get('RequestGpus', 0), require_gpus)
+                if group not in job_data:
+                    job_data[group] = {'projects': {}, 'owners': {}, 'running': 0, 'notrun': 0}
+                job_data[group]['projects'][ospool_job_ad.get('ProjectName', 'No Project')] = True
+                job_data[group]['owners'][ospool_job_ad['Owner']] = True
+                if job_status == 2:
+                    job_data[group]['running'] += 1
+                else:
+                    job_data[group]['notrun'] += 1
+        except htcondor.HTCondorIOError as e:
+            schedds_failed.append(ospool_schedd_name)
+            print(f'Could not access schedd "{ospool_schedd_name}": {e}', file=sys.stderr)
+            continue 
+        schedds_contacted.append(ospool_schedd_name)
+    return (schedds_contacted, schedds_failed, job_data)
+
+# --------------------------------------------------------------
+
+configure_htcondor()
+ospool_schedds = get_schedds(OSPOOL_HOSTS)
+contacted, failed, jobs = get_job_ads(ospool_schedds)
+
+with open('eggs.csv', 'w', newline='') as csvfile:
+    csv_writer = csv.writer(csvfile)
+    csv_writer.writerow(['Universe', 'Request CPUs', 'Request Memory', 'Request Disk', 'Request GPUs', 'Require GPUs', 'Projects', 'Running', 'Not Running'])
+    for group in jobs:
+        csv_row = list(group)
+        csv_row.append(', '.join(jobs[group]['projects'].keys()))
+        csv_row.append(jobs[group]['running'])
+        csv_row.append(jobs[group]['notrun'])
+        csv_writer.writerow(csv_row)

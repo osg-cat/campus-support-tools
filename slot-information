@@ -5,10 +5,51 @@ import classad
 import htcondor
 
 import csv
+import io
+import re
 import sys
 
 # Constants
 OSPOOL_HOSTS = ['cm-1.ospool.osg-htc.org', 'cm-2.ospool.osg-htc.org']
+
+# Rows are (slot ad attribute identifier, internal identifier, CSV column heading)
+ATTRIBUTES = [('GLIDEIN_Factory', 'factory', 'Factory'),
+              ('GLIDEIN_Entry_Name', 'entry', 'GWMS Entry'),
+              ('GLIDEIN_Site', 'site', 'GWMS Site'),
+              ('GLIDEIN_ResourceName', 'resource', 'GWMS Resource'),
+              ('GLIDEIN_Gatekeeper', 'ce', 'CE'),
+              ('Name', 'slot-name', 'Slot Name'),
+              ('GLIDEIN_SiteWMS', 'batch-system', 'Batch SW'),
+              ('GLIDEIN_Max_Walltime', 'max-walltime', 'Max Glidein Hours'),
+              ('CondorVersion', 'condor-version', 'HTCSS Version'),
+              ('SlotType', 'slot-type', 'Slot Type'),
+              ('State', 'state', 'State'),
+              ('Activity', 'activity', 'Activity'),
+              ('OpSysAndVer', 'os-version', 'OS'),
+              ('Arch', 'arch', 'Arch'),
+              ('DetectedCpus', 'host-cpus', 'Host CPUs'),
+              ('TotalCpus', 'glidein-cpus', 'Glidein CPUs'),
+              ('Cpus', 'slot-cpus', 'Slot CPUs'),
+              ('TotalGPUs', 'glidein-gpus', 'Glidein GPUs'),
+              ('GPUs', 'slot-gpus', 'Slot GPUs'),
+              ('GPUs_Capability', 'gpu-capability', 'GPU Capability'),
+              ('GPUs_GlobalMemoryMb', 'gpu-memory', 'GPU Memory'),
+              ('DetectedMemory', 'host-memory', 'Host Memory'),
+              ('TotalMemory', 'glidein-memory', 'Glidein Memory'),
+              ('Memory', 'slot-memory', 'Slot Memory'),
+              ('TotalDisk', 'glidein-disk', 'Glidein Disk'),
+              ('Disk', 'slot-disk', 'Slot Disk'),
+              ('Mips', 'mips', 'MIPS'),
+              ('HasSingularity', 'htcss-singularity', 'HTCSS Has Singularity'),
+              ('HAS_SINGULARITY', 'glidein-singularity', 'Glidein Has Singularity'),
+              ('SingularityVersion', 'singularity-version', 'Singularity Version'),
+              ('SINGULARITY_MODE', 'singularity-mode', 'Singularity Mode'),
+              ('HasFileTransferPluginMethods', 'transfer-plugins', 'File Transfer Plugins'),
+              ('OSDF_PLUGIN_VERSION', 'osdf-version', 'OSDF Plugin Version'),
+              ('HAS_CVMFS_connect_opensciencegrid_org', 'cvmfs-connect', 'CVMFS connect'),
+              ('HAS_CVMFS_oasis_opensciencegrid_org', 'cvmfs-oasis', 'CVMFS OASIS'),
+              ('HAS_CVMFS_stash_osgstorage_org', 'cvmfs-stash', 'CVMFS Stash'),
+              ('AccountingGroup', 'accounting-group', 'Accounting Group')]
 
 def configure_htcondor():
     # See https://opensciencegrid.atlassian.net/browse/INF-760
@@ -23,4 +64,47 @@ def configure_htcondor():
     # htcondor.param['TOOL_DEBUG'] = 'D_SECURITY:2 D_CAT D_ALWAYS:2'
     # htcondor.enable_debug()
 
+def extract_attributes(slot_ad):
+    output = {}
+    for attribute_tuple in ATTRIBUTES:
+        output[attribute_tuple[1]] = slot_ad.get(attribute_tuple[0], '')
+
+    # CE (gateway) name - just take first part
+    ce_space = output['ce'].find(' ')
+    if ce_space > 0:
+        output['ce'] = output['ce'][0:ce_space]
+
+    # Maximum glidein lifetime - convert to hours
+    if isinstance(output['max-walltime'], int):
+        output['max-walltime'] = int(output['max-walltime']) / 3600
+
+    # HTCondor version - extract just version
+    m = re.match(r'\$CondorVersion: ([0-9.]+) ', output['condor-version'])
+    if m is not None:
+        output['condor-version'] = m.group(1)
+
+    # Glidein (total) CPUs - make int
+    output['glidein-cpus'] = int(output['glidein-cpus'])
+
+    return output
+
+def get_slot_data(ospool_hosts):
+    ospool_projection = [attr[0] for attr in ATTRIBUTES]
+    ospool_collector = htcondor.Collector(ospool_hosts)
+    startd_list = ospool_collector.query(htcondor.AdTypes.Startd, constraint=f'GPUs > 0', projection=ospool_projection)
+    data = []
+    for startd_ad in startd_list:
+        data.append(extract_attributes(startd_ad))
+    return data
+
+def print_csv(data):
+    csv_output = io.StringIO()
+    csv_writer = csv.writer(csv_output)
+    csv_writer.writerow([attr[2] for attr in ATTRIBUTES])
+    for slot in data:
+        csv_writer.writerow([slot[attribute_tuple[1]] for attribute_tuple in ATTRIBUTES])
+    print(csv_output.getvalue(), end='')
+
 configure_htcondor()
+slots = get_slot_data(OSPOOL_HOSTS)
+print_csv(slots)

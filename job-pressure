@@ -5,6 +5,7 @@ import classad
 import htcondor
 
 import csv
+import io
 import sys
 
 # Constants
@@ -39,38 +40,75 @@ def get_schedds(ospool_hosts):
                 ospool_schedd_names[ospool_schedd_name] = [1, ospool_schedd_classad]
     return ospool_schedd_names
 
+def extract_attributes(ad):
+    output = {}
+
+    request_memory_mb = ad.eval('RequestMemory')
+    request_memory_gb = request_memory_mb / 1024.0
+    output['request_memory'] = '{:.2f}'.format(request_memory_gb)
+
+    request_disk_kb = ad.eval('RequestDisk')
+    request_disk_gb = request_disk_kb / (1024.0 * 1024.0)
+    output['request_disk'] = '{:.2f}'.format(request_disk_gb)
+
+    project_name_value = ad.get('ProjectName')
+    if project_name_value is None:
+        project_name = '<none>'
+    elif isinstance(project_name_value, classad.ExprTree):
+        project_name = str(project_name_value.eval())
+    else:
+        project_name = project_name_value
+    output['project_name'] = project_name
+
+    job_status = ad['JobStatus']
+    if job_status == htcondor.JobStatus.IDLE:
+        job_state_category = 'idle'
+    elif job_status == htcondor.JobStatus.HELD:
+        job_state_category = 'held'
+    elif job_status in (htcondor.JobStatus.RUNNING, htcondor.JobStatus.TRANSFERRING_OUTPUT, htcondor.JobStatus.SUSPENDED):
+        job_state_category = 'active'
+    elif job_status in (htcondor.JobStatus.REMOVED, htcondor.JobStatus.COMPLETED):
+        job_state_category = 'done'
+    else:
+        job_state_category = 'ERR'
+    output['job_state_category'] = job_state_category
+
+    return output
+
 def get_job_ads(ospool_schedds):
     # Prepare to go through schedds
-    projection = ['ProjectName', 'Owner', 'JobUniverse', 'RequestCpus', 'RequestDisk', 'RequestMemory', 'RequestGpus', 'RequireGpus', 'JobStatus']
+    projection = ['ProjectName', 'Owner', 'JobUniverse', 'RequestCpus', 'RequestDisk', 'RequestMemory', 'RequestGpus', 'JobStatus']
     job_data = {}
     schedds_contacted = []
     schedds_failed = []
 
-    for ospool_schedd_name in ospool_schedds:
+    for ospool_schedd_name in sorted(ospool_schedds.keys()):
         if (ospool_schedd_name in SCHEDD_BLACKLIST) or ('jupyter' in ospool_schedd_name) or ('chtc.wisc.edu' in ospool_schedd_name):
             continue
         ospool_schedd_classad = ospool_schedds[ospool_schedd_name][1]
         ospool_schedd = htcondor.Schedd(ospool_schedd_classad)
+        schedd_name_dot = ospool_schedd_name.find('.')
+        if schedd_name_dot == -1:
+            schedd_short_name = ospool_schedd_name
+        elif schedd_name_dot > 0:
+            schedd_short_name = ospool_schedd_name[0:schedd_name_dot]
+        else:
+            print(f'Bad schedd name? "{ospool_schedd_name}"', file=sys.stderr)
+            sys.exit(1)
         print(f'Trying schedd "{ospool_schedd_name}"', file=sys.stderr)
         try:
             for ospool_job_ad in ospool_schedd.query(projection=projection):
+                attributes = extract_attributes(ospool_job_ad)
                 job_status = ospool_job_ad['JobStatus']
-                require_gpus_expr_tree = ospool_job_ad.get('RequireGpus')
-                if require_gpus_expr_tree is None:
-                    require_gpus = '-'
-                else:
-                    require_gpus = str(require_gpus_expr_tree)
                 group = (ospool_job_ad['JobUniverse'], ospool_job_ad['RequestCpus'],
-                         ospool_job_ad.eval('RequestMemory'), ospool_job_ad.eval('RequestDisk'),
-                         ospool_job_ad.get('RequestGpus', 0), require_gpus)
+                         attributes['request_memory'], attributes['request_disk'],
+                         ospool_job_ad.get('RequestGpus', 0))
                 if group not in job_data:
-                    job_data[group] = {'projects': {}, 'owners': {}, 'running': 0, 'notrun': 0}
-                job_data[group]['projects'][ospool_job_ad.get('ProjectName', 'No Project')] = True
+                    job_data[group] = {'schedds': {}, 'projects': {}, 'owners': {}, 'idle': 0, 'active': 0, 'held': 0, 'done': 0, 'ERR': 0}
+                job_data[group]['schedds'][schedd_short_name] = True
+                job_data[group]['projects'][attributes['project_name']] = True
                 job_data[group]['owners'][ospool_job_ad['Owner']] = True
-                if job_status == 2:
-                    job_data[group]['running'] += 1
-                else:
-                    job_data[group]['notrun'] += 1
+                job_data[group][attributes['job_state_category']] += 1
         except htcondor.HTCondorIOError as e:
             schedds_failed.append(ospool_schedd_name)
             print(f'Could not access schedd "{ospool_schedd_name}": {e}', file=sys.stderr)
@@ -84,12 +122,19 @@ configure_htcondor()
 ospool_schedds = get_schedds(OSPOOL_HOSTS)
 contacted, failed, jobs = get_job_ads(ospool_schedds)
 
-with open('eggs.csv', 'w', newline='') as csvfile:
-    csv_writer = csv.writer(csvfile)
-    csv_writer.writerow(['Universe', 'Request CPUs', 'Request Memory', 'Request Disk', 'Request GPUs', 'Require GPUs', 'Projects', 'Running', 'Not Running'])
-    for group in jobs:
-        csv_row = list(group)
-        csv_row.append(', '.join(jobs[group]['projects'].keys()))
-        csv_row.append(jobs[group]['running'])
-        csv_row.append(jobs[group]['notrun'])
-        csv_writer.writerow(csv_row)
+csv_output = io.StringIO()
+csv_writer = csv.writer(csv_output)
+csv_writer.writerow(['Universe', 'Request CPUs', 'Request Memory', 'Request Disk', 'Request GPUs',
+                     'APs', 'Projects', 'Owners', '# Idle', '# Active', '# Held', '# Done', 'Errs'])
+for group in jobs:
+    csv_row = list(group)
+    csv_row.append(', '.join(jobs[group]['schedds'].keys()))
+    csv_row.append(', '.join(jobs[group]['projects'].keys()))
+    csv_row.append(', '.join(jobs[group]['owners'].keys()))
+    csv_row.append(jobs[group]['idle'])
+    csv_row.append(jobs[group]['active'])
+    csv_row.append(jobs[group]['held'])
+    csv_row.append(jobs[group]['done'])
+    csv_row.append(jobs[group]['ERR'])
+    csv_writer.writerow(csv_row)
+print(csv_output.getvalue(), end='')

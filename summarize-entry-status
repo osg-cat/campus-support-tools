@@ -106,27 +106,31 @@ def parse_arguments():
     # Ok, all done
     return args
 
-def report_on_factory_access_point_pilots(factory_host, entry_name):
+def report_on_factory_access_point_pilots(factory_hosts, entry_name):
     """Prints a report on pilot jobs in the factory Access Points
 
-    The GlideinWMS Factory submits jobs into its own Access Points.  The
-    UCSD Factory runs multiple Access Points (schedds) on the same host,
-    so they have complex names.  Typically, all of the pilots for a
-    given entry are in the same Access Point, but I do not know if that
-    is by design or accident.
+    The GlideinWMS Factory submits jobs into its own Access Points.
+    Each Factory runs multiple Access Points (schedds) on the same
+    host, so they have complex names.  Typically, all of the pilots
+    for a given entry are in the same Access Point, but I do not know
+    if that is by design or accident.
 
-    The corresponding command is:
+    The corresponding command for a single factory is:
     condor_q -global -all -pool gfactory-2.opensciencegrid.org -const 'glideinentryname=="XXX"'
 
     Args:
-      factory_host (str): The Factory hostname with the Access Points.
+      factory_hosts (list): A list of the Factory hostnames with the Access Points.
       entry_name (str): The GlideinWMS entry name to filter by.
+
     """
 
     schedd_constraint = f'GlideinEntryName == "{entry_name}"'
     schedd_projection = ['GlideinFrontendName', 'JobStatus']
-    factory_collector = htcondor.Collector(factory_host)
-    factory_schedd_list = factory_collector.locateAll(htcondor.DaemonTypes.Schedd)
+
+    factory_schedd_list = []
+    for factory_host in factory_hosts:
+        factory_collector = htcondor.Collector(factory_host)
+        factory_schedd_list += factory_collector.locateAll(htcondor.DaemonTypes.Schedd)
 
     factory_queues = {}
     schedds_contacted = []
@@ -300,7 +304,7 @@ def report_on_jobs_at_site(ospool_hosts, resource_names):
     print()
 
 def cli():
-    FACTORY_HOST = 'gfactory-2.opensciencegrid.org'
+    FACTORY_HOSTS = ('gfactory-2.opensciencegrid.org', 'gfactory-1.osg-htc.org')
     OSPOOL_HOSTS = ['cm-1.ospool.osg-htc.org', 'cm-2.ospool.osg-htc.org']
     args = parse_arguments()
     print()
@@ -308,7 +312,7 @@ def cli():
     configure_htcondor()
 
     if args.factory:
-        report_on_factory_access_point_pilots(FACTORY_HOST, args.entry)
+        report_on_factory_access_point_pilots(FACTORY_HOSTS, args.entry)
 
     if args.ospool:
         resource_names = report_on_ospool_resources(OSPOOL_HOSTS, args.entry)

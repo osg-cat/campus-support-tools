@@ -1,3 +1,3 @@
-# Tim’s Campus Support Tools
+# Tim C.’s Campus Support Tools
 
-This repository contains tools I wrote (mostly) for myself to help support campuses work with OSG.
+This repository contains tools I wrote primarily for myself to help support campuses that contribute to the OSDF or OSPool.

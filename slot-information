@@ -33,6 +33,7 @@ ATTRIBUTES = [('GLIDEIN_Factory', 'factory', 'Factory'),
               ('TotalGPUs', 'glidein-gpus', 'Glidein GPUs'),
               ('GPUs', 'slot-gpus', 'Slot GPUs'),
               ('GPUs_Capability', 'gpu-capability', 'GPU Capability'),
+              ('CUDACapability', 'cuda-capability', 'CUDA Capability'),
               ('GPUs_GlobalMemoryMb', 'gpu-memory', 'GPU Memory'),
               ('DetectedMemory', 'host-memory', 'Host Memory'),
               ('TotalMemory', 'glidein-memory', 'Glidein Memory'),
@@ -91,7 +92,7 @@ def extract_attributes(slot_ad):
 def get_slot_data(ospool_hosts):
     ospool_projection = [attr[0] for attr in ATTRIBUTES]
     ospool_collector = htcondor.Collector(ospool_hosts)
-    startd_list = ospool_collector.query(htcondor.AdTypes.Startd, constraint=f'GPUs > 0', projection=ospool_projection)
+    startd_list = ospool_collector.query(htcondor.AdTypes.Startd, constraint=f'TotalGPUs > 0', projection=ospool_projection)
     data = []
     for startd_ad in startd_list:
         data.append(extract_attributes(startd_ad))

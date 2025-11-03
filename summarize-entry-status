@@ -304,7 +304,7 @@ def report_on_jobs_at_site(ospool_hosts, resource_names):
     print()
 
 def cli():
-    FACTORY_HOSTS = ('gfactory-2.opensciencegrid.org', 'gfactory-1.osg-htc.org')
+    FACTORY_HOSTS = ('gfactory-1.osg-htc.org')
     OSPOOL_HOSTS = ['cm-1.ospool.osg-htc.org', 'cm-2.ospool.osg-htc.org']
     args = parse_arguments()
     print()

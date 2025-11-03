@@ -106,7 +106,13 @@ def get_job_ads(ospool_schedds):
                 if group not in job_data:
                     job_data[group] = {'schedds': {}, 'projects': {}, 'owners': {}, 'idle': 0, 'active': 0, 'held': 0, 'done': 0, 'ERR': 0}
                 job_data[group]['schedds'][schedd_short_name] = True
-                job_data[group]['projects'][attributes['project_name']] = True
+                if attributes['project_name'] is None:
+                    project_name = '<none>'
+                elif attributes['project_name'] is classad.classad.Value.Undefined:
+                    project_name = '<undefined>'
+                else:
+                    project_name = attributes['project_name']
+                job_data[group]['projects'][project_name] = True
                 job_data[group]['owners'][ospool_job_ad['Owner']] = True
                 job_data[group][attributes['job_state_category']] += 1
         except htcondor.HTCondorIOError as e:

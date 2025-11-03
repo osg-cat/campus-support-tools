@@ -1,4 +1,4 @@
 #!/bin/sh
 
 resource_name=$1
-condor_status -const "GLIDEIN_ResourceName == \"${resource_name}\"" -print-format ~/campus-support-tools/basic-slot-details.pr.txt -sort Machine -sort DaemonStartTime
+condor_status -const "GLIDEIN_ResourceName == \"${resource_name}\"" -print-format ~/campus-support-tools/etc/basic-slot-details.pr.txt -sort Machine -sort DaemonStartTime

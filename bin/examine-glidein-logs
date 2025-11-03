@@ -9,7 +9,10 @@ import os.path
 import re
 import sys
 
-LOG_DIRECTORIES = ['/ospool/uc-shared/project/OSG-Staff/factory-logs/gfactory-1.osg-htc.org', '/ospool/uc-shared/project/OSG-Staff/factory-logs/gfactory-2.osg-htc.org']
+LOG_DIRECTORIES = [
+    '/ospool/ap22/data/factory_logs/gfactory-1.osg-htc.org', '/ospool/ap22/data/factory_logs/gfactory-2.osg-htc.org',
+    '/ospool/uc-shared/project/OSG-Staff/factory-logs/gfactory-1.osg-htc.org', '/ospool/uc-shared/project/OSG-Staff/factory-logs/gfactory-2.osg-htc.org'   # Old ones, up to ~28 Oct 2025
+]
 LOG_PREFIX = 'entry_'
 
 if len(sys.argv) < 2 or len(sys.argv) > 3:

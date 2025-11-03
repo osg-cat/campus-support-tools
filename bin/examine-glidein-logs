@@ -1,0 +1,104 @@
+#!/usr/bin/env python3
+
+import csv
+import datetime
+import fnmatch
+import io
+import os
+import os.path
+import re
+import sys
+
+LOG_DIRECTORIES = ['/ospool/uc-shared/project/OSG-Staff/factory-logs/gfactory-1.osg-htc.org', '/ospool/uc-shared/project/OSG-Staff/factory-logs/gfactory-2.osg-htc.org']
+LOG_PREFIX = 'entry_'
+
+if len(sys.argv) < 2 or len(sys.argv) > 3:
+    print(f'usage: {os.path.basename(sys.argv[0])} <entry> [<limit>]')
+    sys.exit(1)
+ENTRY_NAME = sys.argv[1]
+MAX_LOGS = 150
+if len(sys.argv) == 3:
+    MAX_LOGS = int(sys.argv[2])
+
+# Find all standard output log files from all factories
+log_file_path_list = []   # Of tuples: (mtime, path)
+out_count = err_count = other_count = 0
+for log_directory in LOG_DIRECTORIES:
+    log_path = os.path.join(log_directory, LOG_PREFIX + ENTRY_NAME)
+    if not os.path.isdir(log_path):
+        print(f'"{log_path}" is not an existing directory')
+        sys.exit(1)
+    for filename in os.listdir(log_path):
+        if fnmatch.fnmatch(filename, 'job.*.out'):
+            out_count += 1
+            output_mtime = os.stat(os.path.join(log_path, filename)).st_mtime
+            log_file_path_list.append((output_mtime, os.path.join(log_path, filename)))
+        elif fnmatch.fnmatch(filename, 'job.*.err'):
+            err_count += 1
+        else:
+            other_count += 1
+
+if len(log_file_path_list) < 1:
+    print(f'No *.out files found in log directories')
+    sys.exit(2)
+
+def select_logs(path_list, latest=None):
+    results = path_list
+    if latest is not None:
+        results = (sorted(path_list))[-latest:]
+    return results
+
+def process_file(log_file_path):
+    file_results = ['id', 'hostname', 'start', 'end', 'code']
+    m = re.match(r'job\.(\d+\.\d+)\.out', os.path.basename(log_file_path))
+    if m:
+        file_results[0] = m.group(1)
+    with open(log_file_path) as out_file_contents:
+        for line in out_file_contents:
+            # Starting glidein_startup.sh at Wed Jan  4 21:41:22 UTC 2023 (1672868482)
+            m = re.match(r'Starting glidein_startup.sh at [^(]* \((\d+)\)', line)
+            if m:
+                start_unixtime = int(m.group(1))
+                start_datetime = datetime.datetime.fromtimestamp(start_unixtime)
+                file_results[2] = start_datetime.strftime('%Y-%m-%d %H:%M:%S')
+
+            # === Glidein ending Wed Jan  4 22:01:22 UTC 2023 (1672869682) with code 1 after 1200 ===
+            m = re.match(r'=== Glidein ending [^(]* \((\d+)\) with code (\d+)', line)
+            if m:
+                file_results[3] = datetime.datetime.fromtimestamp(int(m.group(1))).strftime('%Y-%m-%d %H:%M:%S')
+                file_results[4] = m.group(2)
+
+            # Running on wsu-lc01.osris.org [occurs very early in the glidein log]
+            # Used to use:
+            # <env name="hostname">compute035.cluster</env>
+            # But that was much later and sometimes got truncated
+            m = re.search(r'^Running on (.*)', line)
+            if m:
+                file_results[1] = m.group(1)
+                
+    return file_results
+
+def write_csv(results):
+    csv_output = io.StringIO()
+    writer = csv.writer(csv_output)
+    writer.writerow(['JobID', 'Hostname', 'StartTime', 'EndTime', 'ExitCode'])
+    for result in results:
+        writer.writerow(result)
+    print(csv_output.getvalue(), end='')
+
+log_file_path_list.sort()
+
+from_time = datetime.datetime.fromtimestamp(log_file_path_list[0][0]).strftime("%Y-%m-%d %H:%M:%S")
+till_time = datetime.datetime.fromtimestamp(log_file_path_list[-1][0]).strftime("%Y-%m-%d %H:%M:%S")
+print(f'out files: {out_count}, from {from_time} to {till_time}')
+print(f'err files: {err_count}')
+print(f'other:     {other_count}')
+
+selected_log_files = select_logs(log_file_path_list, latest=MAX_LOGS)
+all_results = []
+for log_file_tuple in selected_log_files:
+    log_file_path = log_file_tuple[1]
+    print(f'Processing "{log_file_path}"')
+    file_results = process_file(log_file_path)
+    all_results.append(file_results)
+write_csv(all_results)

@@ -1,0 +1,26 @@
+# HTCondor print format for basic machine details for an entry
+
+SELECT
+  SlotType
+  Cpus WIDTH AUTO FIT RIGHT
+  GPUs
+  State AS State
+  Activity AS Acty
+  Memory AS Mem PRINTAS READABLE_MB
+  Disk AS Disk PRINTAS READABLE_KB
+  Mips AS MIPS 
+  OpSysAndVer AS OS&Ver
+  HAS_SINGULARITY AS G-App
+  SINGULARITY_CAN_USE_SIF AS G-SIF
+  HasSingularity AS C-App
+  HasSif AS C-SIF
+  STASHCP_VERIFIED AS OSDF
+  HAS_CVMFS_oasis_opensciencegrid_org AS 'CVosg'
+  Machine
+  FormatTime(DaemonStartTime, "%Y-%m-%d") AS DaemonStrt
+  GLIDEIN_ToRetire < time() AS Retir
+  GlobalJobId
+GROUP BY
+  Machine
+# DaemonStartTime  - TJ noted that multiple GROUP BY keys is not implemented yet, 24 Jul 2025
+# Can do in command-line instead

@@ -1,0 +1,15 @@
+#!/bin/sh
+
+MODE=$1
+case $MODE in
+    1 ) COUNT_CONSTRAINT='(GCCandidatesCount > 0)' ;;
+    * ) COUNT_CONSTRAINT='(!isundefined(GCCandidatesCount))' ;;
+esac
+
+while true; do
+    clear
+    date
+    condor_status -const "${COUNT_CONSTRAINT} && ((SlotType == \"Static\") || (SlotType == \"Partitionable\"))" \
+		  -af:h GLIDEIN_ResourceName Machine DaemonStartTime GCCandidatesCount GCRemovedCount GCWalltime GCCandidatesWalltime GCRemovedAvgWalltime GCTotalGB GCFreeGBBefore GCFreeGBAfter GCFatalError
+    sleep 120
+done

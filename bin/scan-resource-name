@@ -1,0 +1,3 @@
+#!/bin/sh
+
+condor_status -af GLIDEIN_ResourceName | sort | uniq -c | egrep -i --color=always "$1"

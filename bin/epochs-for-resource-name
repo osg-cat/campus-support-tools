@@ -1,0 +1,22 @@
+#!/bin/sh
+
+# Error handling would be nice!
+resource_name=$1
+
+# Add a "since" optional argument (in epoch time)?
+
+condor_history -epochs -const "JOBGLIDEIN_ResourceName == \"${resource_name}\"" -limit 50 -af:hj \
+	       ProjectName \
+	       Owner \
+	       'FormatTime(EpochWriteDate, "%Y-%m-%d %H:%M")' \
+	       ActivationDuration \
+	       ActivationExecutionDuration \
+	       ExitCode \
+	       ExitStatus \
+	       ExitBySignal \
+	       NumJobCompletions \
+	       JobStatus \
+	       LastJobStatus \
+	       JobMaxRetries \
+	       VacateReason \
+	       NumVacatesByReason

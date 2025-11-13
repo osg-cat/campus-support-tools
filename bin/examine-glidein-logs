@@ -30,7 +30,7 @@ for log_directory in LOG_DIRECTORIES:
     log_path = os.path.join(log_directory, LOG_PREFIX + ENTRY_NAME)
     if not os.path.isdir(log_path):
         print(f'"{log_path}" is not an existing directory')
-        sys.exit(1)
+        continue
     for filename in os.listdir(log_path):
         if fnmatch.fnmatch(filename, 'job.*.out'):
             out_count += 1

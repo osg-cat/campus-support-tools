@@ -17,7 +17,7 @@ SELECT
   STASHCP_VERIFIED AS OSDF
   HAS_CVMFS_oasis_opensciencegrid_org AS 'CVosg'
   Machine
-  FormatTime(DaemonStartTime, "%Y-%m-%d") AS DaemonStrt
+  FormatTime(DaemonStartTime, "%Y-%m-%d %H:%M") AS DaemonStrt
   GLIDEIN_ToRetire < time() AS Retir
   GlobalJobId
 GROUP BY

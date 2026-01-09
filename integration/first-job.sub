@@ -1,0 +1,25 @@
+executable = first-job.py
+arguments = test 42
+
+output = first-job-$(CLUSTER)-$(PROCESS).out
+error  = first-job-$(CLUSTER)-$(PROCESS).err
+log    = first-job-$(CLUSTER).log
+
+request_cpus   = 1
+request_memory = 256MB
+request_disk   = 8MB
+
+# Create demand on the GlideinWMS Frontend
+# Value corresponds to GLIDEIN_Site in machine ad
+if ! defined SITE
+  error : Must define "site" with Desired_Sites (GLIDEIN_Site)
+endif
++Desired_Sites = "$(SITE)"
+
+# Restrict job to specific "site"
+if ! defined RN
+  error : Must define "rn" with GLIDEIN_ResourceName
+endif
+requirements = GLIDEIN_ResourceName == "$(RN)"
+
+queue 1

@@ -1,0 +1,14 @@
+executable = first-job.py
+arguments = test 42
+
+output = aarch64-$(CLUSTER)-$(PROCESS).out
+error  = aarch64-$(CLUSTER)-$(PROCESS).err
+log    = aarch64-$(CLUSTER).log
+
+request_cpus   = 1
+request_memory = 256MB
+request_disk   = 8MB
+
+requirements = (ARCH == "aarch64") && (GLIDEIN_ResourceName == "Harrisburg-HT24A01-EP")
+
+queue 1

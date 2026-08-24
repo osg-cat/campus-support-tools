@@ -10,9 +10,9 @@ import re
 import sys
 
 LOG_DIRECTORIES = [
-    '/home/gfactory-logbot/logs/gfactory-1.osg-htc.org', '/home/gfactory-logbot/logs/gfactory-2.osg-htc.org',
-    '/ospool/ap22/data/factory_logs/gfactory-1.osg-htc.org', '/ospool/ap22/data/factory_logs/gfactory-2.osg-htc.org',
-    '/ospool/uc-shared/project/OSG-Staff/factory-logs/gfactory-1.osg-htc.org', '/ospool/uc-shared/project/OSG-Staff/factory-logs/gfactory-2.osg-htc.org'   # Old ones, up to ~28 Oct 2025
+    '/home/gfactory-logbot/logs/gfactory-1.osg-htc.org', '/home/gfactory-logbot/logs/gfactory-2.osg-htc.org',   # Local to ap40
+    # '/ospool/ap22/data/factory_logs/gfactory-1.osg-htc.org', '/ospool/ap22/data/factory_logs/gfactory-2.osg-htc.org',
+    # '/ospool/uc-shared/project/OSG-Staff/factory-logs/gfactory-1.osg-htc.org', '/ospool/uc-shared/project/OSG-Staff/factory-logs/gfactory-2.osg-htc.org'   # Old ones, up to ~28 Oct 2025
 ]
 LOG_PREFIX = 'entry_'
 

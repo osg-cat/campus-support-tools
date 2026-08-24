@@ -1,0 +1,5 @@
+#!/bin/sh
+
+condor_status \
+    -schedd \
+    -af:ht Name Machine CondorVersion    # h = column headings, t = tab-separated
